@@ -95,7 +95,9 @@ window.location.href = verificationUrl;</pre>
 			it should navigate to a k-id, verification page, from there hit the face scan option and
 			upload/scan/type the qr code it gives you below and press <span class="font-extrabold"
 				>verify</span
-			>
+			>. <span class="font-bold">if you don't see a face scan option</span>, try vpning out of the
+			usa and try again, this is something discord is rolling out that makes usa based users only
+			have the id scan option.
 		</p>
 		<QRCodeScanner />
 
