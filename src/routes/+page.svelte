@@ -87,7 +87,7 @@ const request = await api.post(&lcub;
   body: &lcub; method: 3 &rcub;,
 &rcub;);
 const verificationUrl = request.body.verification_webview_url;
-window.location.href = verificationUrl;</pre>
+window.open(verificationUrl, "_blank");</pre>
 		<p class="text-center text-white/50">
 			(feel free to read the code, we made it readable and we have nothing to hide)
 		</p>
