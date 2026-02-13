@@ -1,9 +1,7 @@
 <script lang="ts">
-	let qrCodeUrl = $state<string | null>(null);
-	let qrCodeError = $state<string | null>(null);
-	let qrCodeSuccess = $state(false);
+	import QRCodeScanner from '$lib/components/QRCodeScanner.svelte';
 
-	const IS_PATCHED = true;
+	const IS_PATCHED = false;
 </script>
 
 <div class="mx-auto w-screen max-w-6xl items-center p-5 pb-16">
@@ -21,6 +19,17 @@
 
 	{#if !IS_PATCHED}
 		<h2 class="mt-8 text-2xl font-bold">how to verify on discord</h2>
+		<div class="mt-4 flex flex-col bg-red-500/50 p-5">
+			<h1 class="text-2xl font-extrabold">important: please re-read</h1>
+			<p>
+				we recently had to remove the fully automatic k-id verification for discord because of fixes
+				by k-id.
+				<br />
+				<br />
+				please re-read the discord section, as you will now have to scan a qr code it gives you. (the
+				qr code scanner is below the code snippet)
+			</p>
+		</div>
 		<p class="mt-4 text-left">
 			it <span class="font-bold">doesn't matter</span> if you are in the UK or similar region that
 			currently has access to this, this will verify your account for the future global rollout in
@@ -72,83 +81,32 @@ const api = findObjectFromKey(
   "patch",
 );
 
-// send a api request to discord /age-verification/verify and then redirect the page to our website
+// send a api request to discord /age-verification/verify and then redirect the page to k-id's website
 const request = await api.post(&lcub;
   url: "/age-verification/verify",
   body: &lcub; method: 3 &rcub;,
 &rcub;);
 const verificationUrl = request.body.verification_webview_url;
-window.location.href = `https://age-verifier.kibty.town/webview?url=$&lcub;encodeURIComponent(verificationUrl)&rcub;`;</pre>
+window.location.href = verificationUrl;</pre>
 		<p class="text-center text-white/50">
 			(feel free to read the code, we made it readable and we have nothing to hide)
 		</p>
 		<p class="mt-4 text-left">
-			it should navigate to a link <span class="text-white/70"
-				>(or give you a link to navigate to)</span
-			>, from there, you can just wait until the page says success
+			it should navigate to a k-id, verification page, from there hit the face scan option and
+			upload/scan/type the qr code it gives you below and press <span class="font-extrabold"
+				>verify</span
+			>
 		</p>
-		<p class="mt-2 text-left">congrats! your discord account is now age verified.</p>
+		<QRCodeScanner />
 
 		<h2 class="mt-4 text-2xl font-bold">
 			how to verify on other platforms (twitch, kick, snapchat, ...others)
 		</h2>
 		<p>
 			navigate to the age verification page and choose selfie, from there, get the url of the qr
-			code and put it in this input box, and press verify
+			code and put it in this input box, and press <span class="font-extrabold">verify</span>
 		</p>
-
-		<div class="mt-4 flex gap-4">
-			<input
-				class="w-full border-2 border-white/50 p-2"
-				bind:value={qrCodeUrl}
-				placeholder="https://..."
-			/>
-			<button
-				class="w-24 border-2 border-white/50 p-2 hover:cursor-pointer"
-				onclick={(e) => {
-					e.preventDefault();
-					qrCodeError = null;
-					qrCodeSuccess = false;
-
-					if (!qrCodeUrl) {
-						qrCodeError = "you didn't enter a qr code url";
-						return;
-					}
-
-					fetch('/api/verify', {
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json'
-						},
-						body: JSON.stringify({
-							type: 'qr_link',
-							identifier: qrCodeUrl
-						})
-					})
-						.then(async (r) => {
-							if (!r.ok) {
-								qrCodeError = await r.text().catch(() => 'unexpected error');
-								return;
-							}
-
-							qrCodeSuccess = true;
-						})
-						.catch((e) => {
-							console.error('error sending verify request', e);
-							qrCodeError = 'unexpected error, please check your browser console.';
-						});
-				}}>verify</button
-			>
-		</div>
-		{#if qrCodeSuccess}
-			<p class="mt-4 text-green-500">
-				your account has successfully been verified. go back to the site tab to continue
-			</p>
-		{:else if qrCodeError}
-			<p class="mt-4 text-red-500">
-				{qrCodeError}
-			</p>
-		{/if}
+		<QRCodeScanner />
 	{:else}
 		<p class="mt-8 text-red-500">
 			the age verifier is currently patched, we are working on a fix and will update this page when
