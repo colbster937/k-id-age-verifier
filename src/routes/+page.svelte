@@ -19,7 +19,7 @@
 		<a class="underline" href="https://amplitudes.me/" target="_blank">amplitudes</a> (for previous work)
 	</p>
 	<p class="mt-2 text-center text-white/30">
-		project now closed source to keep the bypass working longer
+		project is now closed source to keep the bypass working longer
 	</p>
 
 	{#if !IS_PATCHED}
