@@ -1,12 +1,8 @@
+import { ENABLE_WORKER_PROXY, WORKER_PROXY_TOKEN, WORKER_PROXY_URL } from '$env/static/private';
 import type { RequestEvent } from './$types';
 import { Buffer } from 'node:buffer';
 
 const BASE_URL = 'https://eu-west-1.faceassure.com';
-const K_ID_DEPLOYMENT_ID = '20260212204349-d873b84-production';
-const K_ID_PRIVATELY_ACTION_ID = '40b20a9df4b9c190d3b926d1c6b859c42ca73cb038';
-const K_ID_NEXT_ROUTER_TREE =
-	'%5B%22%22%2C%7B%22children%22%3A%5B%22verify%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D';
-const PRIVATELY_URL_REGEX = /(https:\/\/[a-z0-9]+\.cloudfront\.net\/.*)(?=:\{)/;
 
 const jsonResponse = (body: unknown, status: number = 200, extraHeaders: object = {}) =>
 	new Response(JSON.stringify(body), {
@@ -21,6 +17,31 @@ const randomInt = (min: number, max: number) => Math.floor(Math.random() * (max 
 const randomFloat = (min: number, max: number, decimals = 15) =>
 	parseFloat((Math.random() * (max - min) + min).toFixed(decimals));
 const randomChoice = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+
+async function fetchWithWorkerProxy(
+	sessionId: string,
+	url: string,
+	init: RequestInit
+): Promise<Response> {
+	if (ENABLE_WORKER_PROXY !== 'true') {
+		return await fetch(url, init);
+	}
+
+	return await fetch(WORKER_PROXY_URL, {
+		method: 'POST',
+		headers: {
+			'x-proxy-token': WORKER_PROXY_TOKEN,
+			'content-type': 'application/json'
+		},
+		body: JSON.stringify({
+			method: init.method ?? 'GET',
+			url: url,
+			headers: init.headers,
+			body: init.body ?? null,
+			sessionId
+		})
+	});
+}
 
 function generateId(id: string, sub: string, sessionId: string, delimiter = '|') {
 	let s = 0;
@@ -323,17 +344,8 @@ async function encryptPayload(nonce: string, payload: any) {
 	};
 }
 
-async function generateKIDProof(grant: string, attemptId: string) {
-	return Array.from(
-		new Uint8Array(
-			await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${grant}:${attemptId}:v1`))
-		)
-	)
-		.map((e) => e.toString(16).padStart(2, '0'))
-		.join('');
-}
-
 async function verify(
+	sessionId: string,
 	userAgent: string,
 	location: ReturnType<typeof getRandomLocation>,
 	token: string
@@ -372,22 +384,26 @@ async function verify(
 	if (parts.length !== 3) throw `token is an invalid jwt `;
 	const jwtPayload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
 
-	const sessionRes = await fetch(`${BASE_URL}/age-services/d-privately-age-services`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			...commonHeaders
-		},
-		body: JSON.stringify({
-			request_type: 'generate_new_session',
-			transaction_id: jwtPayload.jti,
-			api_key: null,
-			api_secret: null,
-			token,
-			longURL: null,
-			userAgent: userAgent
-		})
-	});
+	const sessionRes = await fetchWithWorkerProxy(
+		sessionId,
+		`${BASE_URL}/age-services/d-privately-age-services`,
+		{
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				...commonHeaders
+			},
+			body: JSON.stringify({
+				request_type: 'generate_new_session',
+				transaction_id: jwtPayload.jti,
+				api_key: null,
+				api_secret: null,
+				token,
+				longURL: null,
+				userAgent: userAgent
+			})
+		}
+	);
 
 	if (!sessionRes.ok)
 		throw `failed to generate new session (status=${sessionRes.status}, body=${JSON.stringify(await sessionRes.text())})`;
@@ -407,10 +423,14 @@ async function verify(
 
 	const generateTimeline = (maxTime: number) => {
 		const entries = [];
-		for (let i = 0; i < randomInt(2, 5); i++) {
-			const start = randomInt(1, maxTime - 100);
-			const end = start + randomInt(50, 500);
-			if (end < maxTime) entries.push([start, end]);
+		let lastTime = randomInt(1, 5);
+
+		for (let i = 0; i < randomInt(1, 3); i++) {
+			const end = lastTime + randomInt(5, 20);
+			if (end < maxTime) {
+				entries.push([lastTime, end]);
+				lastTime = end + randomInt(20, 100);
+			}
 		}
 		return entries;
 	};
@@ -429,8 +449,22 @@ async function verify(
 			'SLOWLY_DISTANCE_YOURSELF_FROM_THE_CAMERA',
 			'TOO_DARK'
 		];
+		const noState = [
+			'VIDEO_PROCESSING',
+			'STAY_STILL',
+			'TURN_RIGHT',
+			'ALIGN_YOUR_FACE_WITH_THE_CAMERA_UP',
+			'ALIGN_YOUR_FACE_WITH_THE_CAMERA_DOWN',
+			'SLIGHTLY_TILT_YOUR_HEAD_LEFT',
+			'SLIGHTLY_TILT_YOUR_HEAD_RIGHT',
+			'OPEN_YOUR_MOUTH'
+		];
 		const timelines: Record<string, number[][]> = {};
 		states.forEach((state) => (timelines[state] = generateTimeline(completionTime)));
+		noState.forEach((state) => {
+			timelines[state] = [];
+		});
+
 		return timelines;
 	};
 	const baseAge = randomFloat(25.2, 26.0);
@@ -490,7 +524,8 @@ async function verify(
 	const laplacianBlurScores = Array.from({ length: 300 }, () => randomFloat(10, 300, 15));
 	const laplacianMinScore = Math.min(...laplacianBlurScores);
 	const laplacianMaxScore = Math.max(...laplacianBlurScores);
-	const laplacianAvgScore = laplacianBlurScores.reduce((sum, score) => sum + score) / laplacianBlurScores.length;
+	const laplacianAvgScore =
+		laplacianBlurScores.reduce((sum, score) => sum + score) / laplacianBlurScores.length;
 
 	let payload = {
 		request_type: 'complete_transaction',
@@ -607,7 +642,7 @@ async function verify(
 				model_version: 'v.2025.0',
 				cropper_version: 'v.0.0.3',
 				start_time_stamp: currentTime + Number(Math.random().toFixed(3)),
-				end_time_stamp: currentTime + completionTime + Number(Math.random().toFixed(3)),
+				end_time_stamp: currentTime + completionTime / 1000,
 				device_timezone: location.timezone,
 				referring_page: `https://d3ogqhtsivkon3.cloudfront.net/index-v1.10.22.html#/?token=${token}&shi=false&from_qr_scan=true`,
 				parent_page: `https://d3ogqhtsivkon3.cloudfront.net/dynamic_index.html?sl=${jwtPayload.jti}&region=eu-central-1`,
@@ -699,9 +734,9 @@ async function verify(
 					isCameraPermissionGranted: true,
 					completionTime,
 					deferredComputationStartedAt:
-						randomInt(10000, 14000) + Number(Math.random().toFixed(randomInt(1, 3))),
+						currentTime + randomInt(20, 80) + Number(Math.random().toFixed(randomInt(1, 3))),
 					instructionCompletionTime: randomInt(10000, 14000),
-					initialAdjustmentTime: randomInt(10000, 14000),
+					initialAdjustmentTime: randomInt(100, 500),
 					completionState: 'COMPLETE',
 					unfinishedInstructions: Object.fromEntries(
 						[
@@ -779,21 +814,25 @@ async function verify(
 	const encryptionData = await encryptPayload(sessionData.nonce, payload);
 	payload = Object.assign(payload, encryptionData);
 
-	const completeRes = await fetch(`${BASE_URL}/age-services/d-privately-age-services`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			'User-Agent': userAgent,
-			accept: '*/*',
-			'accept-language': location.lang,
-			'access-control-allow-origin': '*',
-			priority: 'u=1, i',
-			'sec-fetch-dest': 'empty',
-			'sec-fetch-mode': 'cors',
-			'sec-fetch-site': 'cross-site'
-		},
-		body: JSON.stringify(payload)
-	});
+	const completeRes = await fetchWithWorkerProxy(
+		sessionId,
+		`${BASE_URL}/age-services/d-privately-age-services`,
+		{
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'User-Agent': userAgent,
+				accept: '*/*',
+				'accept-language': location.lang,
+				'access-control-allow-origin': '*',
+				priority: 'u=1, i',
+				'sec-fetch-dest': 'empty',
+				'sec-fetch-mode': 'cors',
+				'sec-fetch-site': 'cross-site'
+			},
+			body: JSON.stringify(payload)
+		}
+	);
 
 	if (!completeRes.ok)
 		throw `failed to complete transaction (status=${completeRes.status}, body=${JSON.stringify(await completeRes.text())})`;
@@ -804,111 +843,9 @@ async function verify(
 export const POST = async (event: RequestEvent) => {
 	const userAgent = generateUserAgent();
 	const location = getRandomLocation();
+	const sessionId = String(randomInt(1000000000, 1999999999));
 
 	const { type, identifier }: { type: string; identifier: string } = await event.request.json();
-
-	if (type === 'webview') {
-		let webviewUrl: URL;
-		try {
-			webviewUrl = new URL(identifier);
-		} catch (e) {
-			return jsonResponse({ error: 'error parsing webview url' }, 400);
-		}
-
-		if (webviewUrl.host !== 'family.k-id.com' || webviewUrl.pathname !== '/verify') {
-			return jsonResponse({ error: 'unexpected webview url' }, 400);
-		}
-
-		const kIdToken = webviewUrl.searchParams.get('token');
-		if (!kIdToken) {
-			return jsonResponse({ error: 'no k-id token in webview url' }, 400);
-		}
-
-		const parts = kIdToken.split('.');
-		if (parts.length !== 3) {
-			return jsonResponse({ error: 'invalid k-id jwt' }, 400);
-		}
-
-		const payload = JSON.parse(atob(parts[1]));
-
-		const attemptId = crypto.randomUUID();
-
-		// fetch the webview first
-		const res = await fetch(webviewUrl, {
-			headers: {
-				'User-Agent': userAgent,
-				accept:
-					'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-				'accept-language': location.lang,
-				priority: 'u=1, i',
-				'sec-fetch-dest': 'empty',
-				'sec-fetch-mode': 'cors',
-				'sec-fetch-site': 'cross-site',
-				Origin: 'https://family.k-id.com',
-				Referer: identifier
-			}
-		});
-
-		const privatelySsrGrantMatch = (await res.text()).match(
-			/privatelySsrGrant\\?":\\?"(eyJ[\w-]+\.[\w-]+\.[\w-]+)/
-		);
-
-		if (!privatelySsrGrantMatch) {
-			return jsonResponse({ error: 'failed to match privately ssr grant' }, 500);
-		}
-
-		const grant = privatelySsrGrantMatch[1];
-		const proof = await generateKIDProof(grant, attemptId);
-
-		const privatelyActionRes = await fetch(webviewUrl, {
-			method: 'POST',
-			headers: {
-				'User-Agent': userAgent,
-				accept: '*/*',
-				'accept-language': location.lang,
-				priority: 'u=1, i',
-				'sec-fetch-dest': 'empty',
-				'sec-fetch-mode': 'cors',
-				'sec-fetch-site': 'cross-site',
-				'Next-Action': K_ID_PRIVATELY_ACTION_ID,
-				'Next-Router-State-Tree': K_ID_NEXT_ROUTER_TREE,
-				'X-Deployment-Id': K_ID_DEPLOYMENT_ID,
-				'Content-Type': 'application/json',
-				Origin: 'https://family.k-id.com',
-				Referer: identifier
-			},
-			body: JSON.stringify([
-				{ verificationId: payload.jti, useBranding: true, attemptId, proof, grant }
-			])
-		});
-
-		if (!privatelyActionRes.ok) {
-			return jsonResponse(
-				{
-					error: `failed to execute k-id privately action (status=${privatelyActionRes.status})`
-				},
-				500
-			);
-		}
-
-		const privatelyActionBody = await privatelyActionRes.text();
-		const match = privatelyActionBody.match(PRIVATELY_URL_REGEX);
-
-		if (!match) {
-			return jsonResponse({ error: 'no privately url found in response' }, 500);
-		}
-
-		const privatelyUrl = new URL(match[1]);
-		const privatelyToken = privatelyUrl.searchParams.get('token');
-
-		if (!privatelyToken) {
-			return jsonResponse({ error: 'no privately token' }, 500);
-		}
-
-		await verify(userAgent, location, privatelyToken);
-
-		return jsonResponse({ success: true });
-	}
 
 	if (type === 'qr_link') {
 		let qrCodeUrl: URL;
@@ -923,19 +860,23 @@ export const POST = async (event: RequestEvent) => {
 			return jsonResponse({ error: 'failed to get shortlink id from qr code url' }, 400);
 		}
 
-		const res = await fetch(`${BASE_URL}/shortlinks/${encodeURIComponent(shortlinkId)}`, {
-			headers: {
-				'User-Agent': userAgent,
-				accept: '*/*',
-				'accept-language': location.lang,
-				priority: 'u=1, i',
-				'sec-fetch-dest': 'empty',
-				'sec-fetch-mode': 'cors',
-				'sec-fetch-site': 'cross-site'
+		const res = await fetchWithWorkerProxy(
+			sessionId,
+			`${BASE_URL}/shortlinks/${encodeURIComponent(shortlinkId)}`,
+			{
+				headers: {
+					'User-Agent': userAgent,
+					accept: '*/*',
+					'accept-language': location.lang,
+					priority: 'u=1, i',
+					'sec-fetch-dest': 'empty',
+					'sec-fetch-mode': 'cors',
+					'sec-fetch-site': 'cross-site'
+				}
 			}
-		});
+		);
 		if (!res.ok) {
-			return jsonResponse(`failed to get shortlink (status=${res.status})`, 400);
+			return jsonResponse({ error: `failed to get shortlink (status=${res.status})` }, 400);
 		}
 
 		const data = await res.json();
@@ -945,7 +886,7 @@ export const POST = async (event: RequestEvent) => {
 			return jsonResponse({ error: 'token not found in original url' }, 500);
 		}
 
-		await verify(userAgent, location, token);
+		await verify(sessionId, userAgent, location, token);
 
 		return jsonResponse({ success: true });
 	}
