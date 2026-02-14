@@ -14,8 +14,12 @@
 	</p>
 	<p class="mt-4 text-center text-white/50">
 		made by <a class="underline" href="https://kibty.town" target="_blank">xyzeva</a> and
-		<a class="underline" href="https://github.com/Dziurwa14" target="_blank">Dziurwa</a>, greetz to
+		<a class="underline" href="https://github.com/Dziurwa14" target="_blank">Dziurwa</a>,
+		hosted by <a class="underline" href="https://github.com/colbster937" target="_blank">Colbster937</a>, greetz to
 		<a class="underline" href="https://amplitudes.me/" target="_blank">amplitudes</a> (for previous work)
+	</p>
+	<p class="mt-2 text-center text-white/30">
+		project now closed source to keep the bypass working longer
 	</p>
 
 	{#if !IS_PATCHED}
@@ -178,7 +182,7 @@
 		<span class="font-extrabold">we can officially verify our age as an adult.</span> all of this
 		code is open source and available
 		<a
-			href="https://github.com/xyzeva/k-id-age-verifier"
+			href="https://github.com/colbster937/k-id-age-verifier"
 			target="_blank"
 			class="font-extrabold underline"
 			rel="noreferer noopener">on github</a
